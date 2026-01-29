@@ -41,6 +41,16 @@ setVolumeSerialNumber C: 1122-3344 AABB-CCDD
 Set both high and low parts (NTFS only):
 
 
+Save the current serial number to a file
+```
+setVolumeSerialNumber C: > serial.txt
+```
+
+Restore a serial number from a file
+```
+setVolumeSerialNumber C: < serial.txt
+```
+
 ---
 
 ## Technical details
