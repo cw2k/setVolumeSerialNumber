@@ -1,9 +1,7 @@
 import os
+import sys
 import argparse
 from abc import ABC, abstractmethod
-
-SECTOR_SIZE = 0x200
-
 
 # ============================================================
 #  BinaryView: typed integer access + simple compare method
@@ -43,23 +41,25 @@ class BinaryView:
 #  RawDevice: low-level sector I/O (lazy-open + context manager)
 # ============================================================
 
-class RawDevice:
-    """Provides raw sector-level read/write access to a Windows volume.
-    Lazily opens the device handle only when first accessed.
-    """
+SECTOR_SIZE = 0x200
 
+class RawDevice:
+    """Provides raw sector-level read/write access to a Windows volume."""
+    
+    
+    
     def __init__(self, drive_letter: str):
         self.drive = drive_letter.upper().replace(":", "")
         self.path = fr"\\.\{self.drive}:"
-        self._handle = None  # lazy-open
-        
+        self._handle = None
+
     def __del__(self):
         self.close()
-        
+
     @property
     def handle(self):
         if self._handle is None:
-            self._handle = os.open( self.path, os.O_RDWR | os.O_BINARY )
+            self._handle = os.open(self.path, os.O_RDWR | os.O_BINARY)
         return self._handle
 
     def close(self):
@@ -67,14 +67,11 @@ class RawDevice:
             os.close(self._handle)
             self._handle = None
 
-    # with block
     def __enter__(self):
         return self
 
-    # with block
     def __exit__(self, exc_type, exc, tb):
         self.close()
-
 
     def read_sector(self, offset: int = 0) -> BinaryView:
         os.lseek(self.handle, offset, os.SEEK_SET)
@@ -111,8 +108,6 @@ class Ntfs64FormatterMixin:
 # ============================================================
 
 class Volume(ABC):
-    """Abstract representation of a filesystem volume."""
-
     SIGNATURE: bytes = None
     SIGNATURE_OFFSET: int = None
     SERIAL_OFFSET: int = None
@@ -128,8 +123,6 @@ class Volume(ABC):
         return view
 
     def matches(self) -> bool:
-        if self.SIGNATURE is None or self.SIGNATURE_OFFSET is None:
-            raise NotImplementedError("Volume subclass must define SIGNATURE and SIGNATURE_OFFSET")
         return self.boot.compare_bytes(self.SIGNATURE, self.SIGNATURE_OFFSET)
 
     @property
@@ -182,11 +175,9 @@ class NTFSVolume(Volume, Ntfs64FormatterMixin):
 # ============================================================
 
 class FAT32Volume(Volume, FatStyleFormatterMixin):
-    
     SIGNATURE = b"FAT32"
     SIGNATURE_OFFSET = 0x52
-    
-    SERIAL_OFFSET    = 0x43
+    SERIAL_OFFSET = 0x43
 
     @property
     def name(self) -> str:
@@ -207,11 +198,9 @@ class FAT32Volume(Volume, FatStyleFormatterMixin):
 # ============================================================
 
 class FAT16Volume(Volume, FatStyleFormatterMixin):
-    
     SIGNATURE = b"FAT"
     SIGNATURE_OFFSET = 0x36
-    
-    SERIAL_OFFSET    = 0x27
+    SERIAL_OFFSET = 0x27
 
     @property
     def name(self) -> str:
@@ -228,7 +217,7 @@ class FAT16Volume(Volume, FatStyleFormatterMixin):
 
 
 # ============================================================
-#  VolumeFactory (pythonic)
+#  VolumeFactory
 # ============================================================
 
 class VolumeFactory:
@@ -237,7 +226,6 @@ class VolumeFactory:
         FAT32Volume,
         FAT16Volume,
     )
-
 
     @staticmethod
     def open(drive_letter: str) -> Volume:
@@ -261,52 +249,38 @@ class VolumeInspector:
 
     def show_info(self):
         vol = self.volume
-        print(f"Volume {vol.device.drive}: filesystem = {vol.name}")
-        
-        serial = vol.read_serial()
-        print(f"Raw value:    {serial:X}")
-        print(f"Formatted:    {vol.format_serial(serial)}")
+        Console.info(f"Volume {vol.device.drive}: filesystem = {vol.name}")
 
-        if isinstance(vol, NTFSVolume):
-            low32 = serial & 0xFFFFFFFF
-            print(  f"NTFS Low32:   {low32:08X} ("
-                    f"{FatStyleFormatterMixin().format_fat32_style(low32)}"
-                    f")" 
-            )
+        serial = vol.read_serial()
+        Console.out(vol.format_serial(serial))
 
     def apply_new_serial(self, low_str: str, high_str: str | None):
         vol = self.volume
 
-        # Low-Teil immer parsen
         low = parse_serial_string(low_str)
-        new_serial =   low 
+        new_serial = low
 
-
-
-        
-        # NTFS: High-Teil nur ändern, wenn explizit angegeben
         if isinstance(vol, NTFSVolume):
             if high_str is None:
-                # High bleibt unverändert
                 high = (vol.read_serial() >> 32) & 0xFFFFFFFF
-                print("Note: High part of NTFS serial remains unchanged.")
-                print("      Provide a value like 0000-0000 to modify it.")
+                Console.warn("High part of NTFS serial remains unchanged.")
+                Console.warn("Provide a value like 0000-0000 to modify it.")
             else:
                 high = parse_serial_string(high_str)
 
-            new_serial = (high << 32) | low 
+            new_serial = (high << 32) | low
 
-        print("\nWriting new serial:")
-        print(f"  {vol.format_serial(new_serial)}")
+        Console.info("Writing new serial:")
+        Console.out(vol.format_serial(new_serial))
 
         vol.apply_serial(new_serial)
         vol.device.close()
 
 
-
 # ============================================================
 #  CLI helpers
 # ============================================================
+
 def validate_drive(text: str) -> str:
     d = text.upper().replace(":", "")
     if len(d) != 1 or not d.isalpha():
@@ -323,14 +297,10 @@ def parse_serial_string(text: str) -> int:
 
 def build_arg_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(description="Volume serial inspector/editor")
-    p.add_argument("drive", type=validate_drive,
-                    help="Drive letter, e.g. C: or C")
-                    
-    p.add_argument("low_serial", nargs="?",   
-                    help="Low part of serial (hex)")
-                    
-    p.add_argument("high_serial", nargs="?", 
-                    help="High part (NTFS only)")
+    p.add_argument("drive", type=validate_drive, help="Drive letter, e.g. C: or C")
+    p.add_argument("low_serial", nargs="?", help="Low part of serial (hex)")
+    p.add_argument("high_serial", nargs="?", help="High part (NTFS only)")
+    p.add_argument("--no-color", action="store_true", help="Disable colored stderr output")
     return p
 
 
@@ -342,17 +312,127 @@ def main():
     parser = build_arg_parser()
     args = parser.parse_args()
 
+    Console.disable_color = args.no_color
+
+    stdin_serial = Console.in_()
+    if args.low_serial is None and stdin_serial:
+        args.low_serial = stdin_serial
+
     inspector = VolumeInspector(args.drive)
 
-    # Wenn keine Serial angegeben wurde → nur anzeigen
     if args.low_serial is None:
-        inspector.show_info()
+        serial = inspector.volume.read_serial()
+        Console.out(inspector.volume.format_serial(serial))
         return
 
-    # Sonst: Serial setzen
-    inspector.show_info()
     inspector.apply_new_serial(args.low_serial, args.high_serial)
 
+
+
+# ============================================================
+#  Colorama import with graceful fallback (Windows only)
+# ============================================================
+
+try:
+    from colorama import Fore, Style, init
+    init()  # enable ANSI colors on Windows
+    _COLORAMA_AVAILABLE = True
+except ImportError:
+    _COLORAMA_AVAILABLE = False
+
+    # Dummy color constants (no color output)
+    class _DummyStyle:
+        RESET_ALL = ""
+    class _DummyFore:
+        RED = ""
+        YELLOW = ""
+        CYAN = ""
+
+    Fore = _DummyFore()
+    Style = _DummyStyle()
+
+    # Print a hint to stderr (Console may not exist yet)
+    print("Warning: colorama not installed. Install with: pip install colorama",
+          file=sys.stderr)
+
+
+# ============================================================
+#  Console + Color utilities (stdout, stderr, stdin, colors)
+# ============================================================
+
+class Color:
+    """
+    Context manager for temporarily applying a terminal color to stderr output.
+
+    Color is only applied when:
+    - stderr is a TTY, and
+    - Console.disable_color is False
+    """
+
+    def __init__(self, color: str):
+        self.color = color
+        self.enabled = sys.stderr.isatty() and not Console.disable_color
+
+    def __enter__(self):
+        if self.enabled:
+            sys.stderr.write(self.color)
+        return self
+
+    def __exit__(self, exc_type, exc, tb):
+        if self.enabled:
+            sys.stderr.write(Style.RESET_ALL)
+
+
+class Console:
+    """
+    Unified interface for stdout, stderr, stdin, and colored log levels.
+    """
+
+    disable_color = False
+
+    @staticmethod
+    def out(*args, **kwargs):
+        """Print to stdout (machine-readable output)."""
+        print(*args, file=sys.stdout, **kwargs)
+
+    @staticmethod
+    def err(*args, **kwargs):
+        """Print to stderr (human-readable output)."""
+        print(*args, file=sys.stderr, **kwargs)
+
+    @staticmethod
+    def color(color: str) -> Color:
+        """Return a Color context manager for colored stderr output."""
+        return Color(color)
+
+    @staticmethod
+    def info(msg: str):
+        """Print an informational message in cyan (stderr)."""
+        with Console.color(Fore.CYAN):
+            Console.err(msg)
+
+    @staticmethod
+    def warn(msg: str):
+        """Print a warning message in yellow (stderr)."""
+        with Console.color(Fore.YELLOW):
+            Console.err(msg)
+
+    @staticmethod
+    def error(msg: str):
+        """Print an error message in red (stderr)."""
+        with Console.color(Fore.RED):
+            Console.err(msg)
+
+    @staticmethod
+    def in_(strip: bool = True) -> str | None:
+        """
+        Read from stdin if input is piped or redirected.
+        """
+        if sys.stdin.isatty():
+            return None
+
+        data = sys.stdin.read()
+        return data.strip() if strip else data
 
 
 if __name__ == "__main__":
